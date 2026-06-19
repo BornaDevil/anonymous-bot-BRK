@@ -1,8 +1,6 @@
 import os
 import logging
 import sqlite3
-from threading import Thread
-from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
@@ -165,20 +163,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⚠️ You are not in reply mode.")
 
-# ---------- FLASK WEB SERVER ----------
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "🤖 Bot is running!"
-
-@app.route('/health')
-def health():
-    return "OK", 200
-
 # ---------- BOT STARTER ----------
-def run_bot():
-    logger.info("🚀 Starting bot thread...")
+def main():
+    logger.info("🚀 Starting bot...")
     application = Application.builder().token(TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -199,10 +186,5 @@ def run_bot():
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# ---------- MAIN ----------
-if __name__ == '__main__':
-    bot_thread = Thread(target=run_bot)
-    bot_thread.start()
-    
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+if __name__ == "__main__":
+    main()
