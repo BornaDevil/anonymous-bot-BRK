@@ -7,11 +7,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ---------- CONFIGURATION ----------
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-if not TOKEN:
-    raise ValueError("❌ TELEGRAM_TOKEN environment variable is not set!")
-
-ADMIN_ID = 6747512673  # ⚠️ اینجا آیدی عددی خودت رو بذار
+TOKEN = "8930850659:AAHPa6kZCIctxoqK6B2m6f6B9Xpdz_kPZ4k"
+ADMIN_ID = 6747512673
 
 # Logging setup
 logging.basicConfig(
@@ -23,7 +20,6 @@ logger = logging.getLogger(__name__)
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
-# Create tables if they don't exist
 cursor.execute("""
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -75,31 +71,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     add_user(user.id, user.first_name or "", user.username or "")
     await update.message.reply_text(
-        "👋 سلام! این یک ربات پیام ناشناس است.\n"
-        "هر پیامی بفرستید، به ادمین می‌رسد."
+        "👋 Hello! This is an anonymous messaging bot.\n"
+        "Send any message and it will be forwarded to the admin."
     )
 
 async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     
     if is_user_blocked(user.id):
-        await update.message.reply_text("⛔ شما بلاک شده‌اید.")
+        await update.message.reply_text("⛔ You have been blocked.")
         return
 
     add_user(user.id, user.first_name or "", user.username or "")
     save_message(user.id, ADMIN_ID, update.message.text)
 
     log_message = (
-        f"📩 **پیام جدید از طرف:**\n"
-        f"👤 نام: {user.first_name or 'ندارد'}\n"
-        f"🆔 آیدی: `{user.id}`\n"
-        f"📛 یوزرنیم: @{user.username if user.username else 'ندارد'}\n\n"
-        f"📝 متن:\n{update.message.text}"
+        f"📩 **New message from:**\n"
+        f"👤 Name: {user.first_name or 'N/A'}\n"
+        f"🆔 ID: `{user.id}`\n"
+        f"📛 Username: @{user.username if user.username else 'N/A'}\n\n"
+        f"📝 Text:\n{update.message.text}"
     )
     
     keyboard = [
-        [InlineKeyboardButton("✉️ پاسخ", callback_data=f"reply_{user.id}")],
-        [InlineKeyboardButton("🚫 بلاک", callback_data=f"block_{user.id}")]
+        [InlineKeyboardButton("✉️ Reply", callback_data=f"reply_{user.id}")],
+        [InlineKeyboardButton("🚫 Block", callback_data=f"block_{user.id}")]
     ]
     
     await context.bot.send_message(
@@ -108,14 +104,14 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="MarkdownV2",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    await update.message.reply_text("✅ پیام شما ارسال شد.")
+    await update.message.reply_text("✅ Your message has been sent.")
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     if query.from_user.id != ADMIN_ID:
-        await query.edit_message_text("⛔ دسترسی ندارید.")
+        await query.edit_message_text("⛔ You don't have permission.")
         return
 
     data = query.data
@@ -125,12 +121,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['reply_to_user'] = user_id
         context.user_data['waiting_for_reply'] = True
         await query.edit_message_text(
-            f"✉️ پاسخ خود را برای کاربر {user_id} تایپ کنید. (لغو: /cancel)"
+            f"✉️ Type your reply for user {user_id}. (Cancel: /cancel)"
         )
     elif data.startswith("block_"):
         user_id = int(data.split("_")[1])
         block_user(user_id)
-        await query.edit_message_text(f"✅ کاربر {user_id} بلاک شد.")
+        await query.edit_message_text(f"✅ User {user_id} has been blocked.")
 
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -141,19 +137,19 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     target_id = context.user_data.get('reply_to_user')
     if not target_id:
-        await update.message.reply_text("❌ خطا: کاربر مقصد پیدا نشد.")
+        await update.message.reply_text("❌ Error: No target user found.")
         context.user_data['waiting_for_reply'] = False
         return
     
     try:
         await context.bot.send_message(
             target_id,
-            f"📩 پاسخ ادمین:\n\n{update.message.text}"
+            f"📩 Admin response:\n\n{update.message.text}"
         )
-        await update.message.reply_text("✅ پیام ارسال شد.")
+        await update.message.reply_text("✅ Message sent successfully.")
     except Exception as e:
         logger.error(f"Error sending reply: {e}")
-        await update.message.reply_text("❌ خطا در ارسال. کاربر ممکن است ربات را بلاک کرده باشد.")
+        await update.message.reply_text("❌ Failed to send message. User may have blocked the bot.")
     
     context.user_data['waiting_for_reply'] = False
     context.user_data['reply_to_user'] = None
@@ -165,9 +161,9 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('waiting_for_reply'):
         context.user_data['waiting_for_reply'] = False
         context.user_data['reply_to_user'] = None
-        await update.message.reply_text("✅ حالت پاسخگویی لغو شد.")
+        await update.message.reply_text("✅ Reply mode cancelled.")
     else:
-        await update.message.reply_text("⚠️ شما در حالت پاسخگویی نیستید.")
+        await update.message.reply_text("⚠️ You are not in reply mode.")
 
 # ---------- FLASK WEB SERVER ----------
 app = Flask(__name__)
