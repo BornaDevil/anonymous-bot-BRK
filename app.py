@@ -1,20 +1,30 @@
 import os
 import logging
 import sqlite3
+import re
 import traceback
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
 # ---------- تنظیمات ----------
 TOKEN = "8930850659:AAHPa6kZCIctxoqK6B2m6f6B9Xpdz_kPZ4k"
-MASTER_ADMIN_ID = 6747512673
+MASTER_ADMIN_ID = 6747512673  # فقط خودت
 
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ---------- دیتابیس ----------
+# ---------- تابع escape برای MarkdownV2 ----------
+def escape_markdown(text):
+    """Escape characters reserved by MarkdownV2"""
+    if not text:
+        return ""
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(r'([{}])'.format(re.escape(escape_chars)), r'\\\1', text)
+
+# ---------- اتصال به دیتابیس ----------
 conn = sqlite3.connect("bot.db", check_same_thread=False)
 cursor = conn.cursor()
 
@@ -40,7 +50,7 @@ cursor.execute("""
 """)
 conn.commit()
 
-# ---------- توابع کمکی دیتابیس ----------
+# ---------- توابع کمکی ----------
 def add_user(user_id, first_name, username, role='user'):
     cursor.execute(
         "INSERT OR IGNORE INTO users (user_id, first_name, username, role) VALUES (?, ?, ?, ?)",
@@ -83,9 +93,7 @@ def get_recent_messages(limit=20):
 def get_user_info(user_id):
     cursor.execute("SELECT first_name, username FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
-    if row:
-        return row[0], row[1]
-    return "نامشخص", "ندارد"
+    return row if row else ("نامشخص", "ندارد")
 
 def get_all_admins():
     cursor.execute("SELECT user_id FROM users WHERE role = 'admin'")
@@ -99,15 +107,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         first_name = user.first_name or ""
         username = user.username or ""
 
-        # ثبت کاربر
+        # ثبت یا به‌روزرسانی کاربر
         existing_role = get_user_role(user_id)
         if existing_role == 'user':
             add_user(user_id, first_name, username, 'user')
         else:
-            cursor.execute("UPDATE users SET first_name = ?, username = ? WHERE user_id = ?", (first_name, username, user_id))
+            cursor.execute("UPDATE users SET first_name = ?, username = ? WHERE user_id = ?",
+                          (first_name, username, user_id))
             conn.commit()
 
-        # بررسی لینک اختصاصی
+        # بررسی لینک اختصاصی (start=user_id)
         args = context.args
         if args:
             try:
@@ -115,39 +124,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if target_id != user_id:
                     context.user_data['target_user_id'] = target_id
                     await update.message.reply_text(
-                        f"🔹 شما در حال ارسال پیام ناشناس به کاربری با آیدی {target_id} هستید.\n"
+                        f"🔹 شما در حال ارسال پیام ناشناس به کاربری با آیدی `{target_id}` هستید.\n"
                         "📝 پیام خود را بفرستید."
                     )
                     return
             except ValueError:
                 pass
 
-        # نقش کاربر
         role = get_user_role(user_id)
+
         if role == 'admin' or user_id == MASTER_ADMIN_ID:
             # پنل ادمین
             keyboard = [
                 [InlineKeyboardButton("📋 مشاهده لاگ", callback_data="view_log")],
-                [InlineKeyboardButton("📊 آمار", callback_data="stats")],
+                [InlineKeyboardButton("📊 آمار کاربران", callback_data="stats")],
                 [InlineKeyboardButton("➕ اضافه کردن ادمین", callback_data="add_admin")],
             ]
             if user_id == MASTER_ADMIN_ID:
                 keyboard.append([InlineKeyboardButton("❌ حذف ادمین", callback_data="remove_admin")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
+            
             await update.message.reply_text(
-                "👋 سلام ادمین! به پنل مدیریت خوش آمدی.\n\nاز دکمه‌های زیر استفاده کن:",
-                reply_markup=reply_markup
+                "👋 **سلام ادمین! به پنل مدیریت خوش آمدی.**\n\nاز دکمه‌های زیر استفاده کن:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="MarkdownV2"
             )
         else:
             # کاربر عادی
             bot_username = (await context.bot.get_me()).username
             link = f"https://t.me/{bot_username}?start={user_id}"
             await update.message.reply_text(
-                f"👋 سلام {first_name}!\n\n"
-                f"🔗 لینک اختصاصی شما:\n{link}\n\n"
-                "با ارسال این لینک به دیگران، آن‌ها می‌توانند به شما پیام ناشناس بفرستند.\n"
-                "برای ارسال پیام به ادمین، مستقیم پیام خود را بفرستید."
+                f"👋 سلام {escape_markdown(first_name)}!\n\n"
+                f"🔗 **لینک اختصاصی شما:**\n{escape_markdown(link)}\n\n"
+                "با ارسال این لینک به دیگران، آن‌ها می‌توانند **به شما** پیام ناشناس بفرستند.\n"
+                "برای ارسال پیام به ادمین، مستقیم پیام خود را بفرستید.",
+                parse_mode="MarkdownV2"
             )
+
     except Exception as e:
         logger.error(f"خطا در start: {e}\n{traceback.format_exc()}")
         await update.message.reply_text("❌ خطایی رخ داد. لطفاً دوباره تلاش کن.")
@@ -170,12 +182,13 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             try:
                 await context.bot.send_message(
                     chat_id=target_id,
-                    text=f"📩 پیام ناشناس از طرف یک کاربر:\n\n{text}"
+                    text=f"📩 **پیام ناشناس از طرف یک کاربر:**\n\n{escape_markdown(text)}",
+                    parse_mode="MarkdownV2"
                 )
                 await update.message.reply_text("✅ پیام شما با موفقیت ارسال شد.")
             except Exception as e:
                 logger.error(f"خطا در ارسال به {target_id}: {e}")
-                await update.message.reply_text("❌ خطا در ارسال پیام.")
+                await update.message.reply_text("❌ خطا در ارسال. کاربر ممکن است ربات را بلاک کرده باشد.")
             context.user_data.pop('target_user_id', None)
             return
 
@@ -188,11 +201,11 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         first_name = user.first_name or "ندارد"
         username = user.username or "ندارد"
         log_msg = (
-            f"📩 پیام جدید از طرف کاربر:\n"
-            f"👤 نام: {first_name}\n"
-            f"🆔 آیدی: {user_id}\n"
-            f"📛 یوزرنیم: @{username if username else 'ندارد'}\n\n"
-            f"📝 متن:\n{text}"
+            f"📩 **پیام جدید از طرف کاربر:**\n"
+            f"👤 نام: {escape_markdown(first_name)}\n"
+            f"🆔 آیدی: `{user_id}`\n"
+            f"📛 یوزرنیم: @{escape_markdown(username) if username else 'ندارد'}\n\n"
+            f"📝 متن:\n{escape_markdown(text)}"
         )
         keyboard = [
             [InlineKeyboardButton("✉️ پاسخ", callback_data=f"reply_{user_id}")],
@@ -203,14 +216,18 @@ async def handle_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE
                 await context.bot.send_message(
                     chat_id=admin_id,
                     text=log_msg,
+                    parse_mode="MarkdownV2",
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             except Exception as e:
-                logger.error(f"ارسال به ادمین {admin_id} ناموفق: {e}")
+                logger.error(f"نمی‌توان به ادمین {admin_id} ارسال کرد: {e}")
+
         save_message(user_id, admins[0], text)
         await update.message.reply_text("✅ پیام شما برای ادمین‌ها ارسال شد.")
+
     except Exception as e:
         logger.error(f"خطا در handle_user_message: {e}\n{traceback.format_exc()}")
+        await update.message.reply_text("❌ خطایی رخ داد.")
 
 # ---------- هندلر دکمه‌ها ----------
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,12 +249,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not messages:
                 await query.edit_message_text("📭 هیچ پیامی یافت نشد.")
                 return
-            text = "📋 لاگ پیام‌های اخیر:\n\n"
+            text = "📋 **لاگ پیام‌های اخیر:**\n\n"
             for from_id, to_id, msg, created in messages:
                 from_name, _ = get_user_info(from_id)
                 to_name, _ = get_user_info(to_id)
-                text += f"از {from_name} ({from_id}) به {to_name} ({to_id}):\n\"{msg[:50]}{'...' if len(msg)>50 else ''}\"\n\n"
-            await query.edit_message_text(text)
+                text += f"🆔 **از** {escape_markdown(from_name)} (`{from_id}`) **به** {escape_markdown(to_name)} (`{to_id}`):\n\"{escape_markdown(msg[:40])}{'...' if len(msg)>40 else ''}\"\n\n"
+            await query.edit_message_text(text, parse_mode="MarkdownV2")
 
         elif data == "stats":
             cursor.execute("SELECT COUNT(*) FROM users WHERE role='user'")
@@ -245,9 +262,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cursor.execute("SELECT COUNT(*) FROM messages")
             messages_count = cursor.fetchone()[0]
             await query.edit_message_text(
-                f"📊 آمار کلی:\n\n"
+                f"📊 **آمار کلی:**\n\n"
                 f"👥 تعداد کاربران عادی: {users_count}\n"
-                f"💬 تعداد کل پیام‌ها: {messages_count}"
+                f"💬 تعداد کل پیام‌ها: {messages_count}",
+                parse_mode="MarkdownV2"
             )
 
         elif data == "add_admin":
@@ -256,9 +274,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             context.user_data['add_admin_mode'] = True
             await query.edit_message_text(
-                "🔹 لطفاً آیدی عددی یا یوزرنیم (با @) کاربر مورد نظر را وارد کنید.\n"
-                "مثال: 123456789 یا @username\n\n"
-                "برای لغو، دستور /cancel را بفرستید."
+                "🔹 **لطفاً آیدی عددی یا یوزرنیم (با @) کاربر مورد نظر را وارد کنید.**\n"
+                "مثال: `123456789` یا `@username`\n\n"
+                "برای لغو، دستور /cancel را بفرستید.",
+                parse_mode="MarkdownV2"
             )
 
         elif data == "remove_admin":
@@ -266,9 +285,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("⛔ فقط ادمین اصلی می‌تواند ادمین حذف کند.")
                 return
             admins = get_all_admins()
-            if not admins:
-                await query.edit_message_text("📭 هیچ ادمینی به جز شما وجود ندارد.")
-                return
             keyboard = []
             for admin_id in admins:
                 if admin_id == MASTER_ADMIN_ID:
@@ -278,8 +294,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not keyboard:
                 await query.edit_message_text("📭 هیچ ادمین دیگری برای حذف وجود ندارد.")
                 return
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await query.edit_message_text("👤 لیست ادمین‌ها (به جز خودت):\nروی هرکدام کلیک کن تا حذف شود.", reply_markup=reply_markup)
+            await query.edit_message_text(
+                "👤 **لیست ادمین‌ها (به جز خودت):**\nروی هرکدام کلیک کن تا حذف شود.",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode="MarkdownV2"
+            )
 
         elif data.startswith("remove_confirm_"):
             if not is_master:
@@ -290,24 +309,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.edit_message_text("⛔ نمی‌توانی خودت را حذف کنی.")
                 return
             set_user_role(target_id, 'user')
-            await query.edit_message_text(f"✅ کاربر با آیدی {target_id} از نقش ادمین حذف شد.")
+            await query.edit_message_text(f"✅ کاربر با آیدی `{target_id}` از نقش ادمین حذف شد.", parse_mode="MarkdownV2")
 
         elif data.startswith("reply_"):
             target_id = int(data.split("_")[1])
             context.user_data['reply_to_user'] = target_id
             context.user_data['waiting_for_reply'] = True
             await query.edit_message_text(
-                f"✉️ پاسخ خود را برای کاربر با آیدی {target_id} تایپ کنید.\n(برای لغو، دستور /cancel را بفرستید.)"
+                f"✉️ پاسخ خود را برای کاربر با آیدی `{target_id}` تایپ کنید.\n(برای لغو، دستور /cancel را بفرستید.)",
+                parse_mode="MarkdownV2"
             )
 
         elif data.startswith("block_"):
             target_id = int(data.split("_")[1])
             block_user(target_id)
-            await query.edit_message_text(f"✅ کاربر با آیدی {target_id} با موفقیت بلاک شد.")
+            await query.edit_message_text(f"✅ کاربر با آیدی `{target_id}` با موفقیت بلاک شد.", parse_mode="MarkdownV2")
+
     except Exception as e:
         logger.error(f"خطا در button_callback: {e}\n{traceback.format_exc()}")
+        await query.edit_message_text("❌ خطایی رخ داد.")
 
-# ---------- هندلر ورودی متنی (اضافه کردن ادمین) ----------
+# ---------- هندلر اضافه کردن ادمین ----------
 async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -322,7 +344,7 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     chat = await context.bot.get_chat(f"@{username}")
                     target_id = chat.id
                 except Exception as e:
-                    await update.message.reply_text(f"❌ کاربر با یوزرنیم {text} پیدا نشد.")
+                    await update.message.reply_text(f"❌ کاربر با یوزرنیم `{text}` پیدا نشد.")
                     context.user_data['add_admin_mode'] = False
                     return
             else:
@@ -334,21 +356,24 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             role = get_user_role(target_id)
             if role == 'admin':
-                await update.message.reply_text(f"ℹ️ کاربر با آیدی {target_id} از قبل ادمین است.")
+                await update.message.reply_text(f"ℹ️ کاربر با آیدی `{target_id}` از قبل ادمین است.")
             else:
                 set_user_role(target_id, 'admin')
                 add_user(target_id, "", "", 'admin')
-                await update.message.reply_text(f"✅ کاربر با آیدی {target_id} با موفقیت به ادمین‌ها اضافه شد.")
+                await update.message.reply_text(f"✅ کاربر با آیدی `{target_id}` با موفقیت به ادمین‌ها اضافه شد.")
 
             context.user_data['add_admin_mode'] = False
+
     except Exception as e:
         logger.error(f"خطا در handle_text_input: {e}\n{traceback.format_exc()}")
+        await update.message.reply_text("❌ خطایی رخ داد.")
 
 # ---------- هندلر پاسخ ادمین ----------
 async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
-        if get_user_role(user_id) != 'admin' and user_id != MASTER_ADMIN_ID:
+        role = get_user_role(user_id)
+        if role != 'admin' and user_id != MASTER_ADMIN_ID:
             return
 
         if not context.user_data.get('waiting_for_reply'):
@@ -363,17 +388,20 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"📩 پاسخ ادمین:\n\n{update.message.text}"
+                text=f"📩 **پاسخ ادمین:**\n\n{escape_markdown(update.message.text)}",
+                parse_mode="MarkdownV2"
             )
             await update.message.reply_text("✅ پیام شما با موفقیت ارسال شد.")
         except Exception as e:
             logger.error(f"خطا در ارسال پاسخ: {e}")
-            await update.message.reply_text("❌ خطا در ارسال پیام.")
+            await update.message.reply_text("❌ خطا در ارسال پیام. کاربر ممکن است ربات را بلاک کرده باشد.")
 
         context.user_data['waiting_for_reply'] = False
         context.user_data['reply_to_user'] = None
+
     except Exception as e:
         logger.error(f"خطا در handle_admin_reply: {e}\n{traceback.format_exc()}")
+        await update.message.reply_text("❌ خطایی رخ داد.")
 
 # ---------- هندلر لغو ----------
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -392,6 +420,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ حالت پاسخگویی لغو شد.")
         else:
             await update.message.reply_text("⚠️ شما در هیچ حالت خاصی نیستید.")
+
     except Exception as e:
         logger.error(f"خطا در cancel: {e}\n{traceback.format_exc()}")
 
